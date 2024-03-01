@@ -24,13 +24,14 @@ def upload_file():
         files = request.files.getlist('file[]')
         responses = []
 
+        # ファイルとテキストのペアを処理するための修正
         for text, file in zip(texts, files):
-            original_filename = secure_filename(file.filename)
-            folder_name = 'uploads/'
-            upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            full_file_name = os.path.join(folder_name, original_filename)
+            if file.filename:  # 空のファイル名をチェック
+                original_filename = secure_filename(file.filename)
+                folder_name = 'uploads/'
+                upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                full_file_name = os.path.join(folder_name, original_filename)
 
-            if file:
                 s3.upload_fileobj(file, S3_BUCKET_NAME, full_file_name)
                 file_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{full_file_name}"
                 
@@ -45,6 +46,9 @@ def upload_file():
                 )
                 
                 responses.append({"message": "Upload successful", "file_url": file_url})
+            else:
+                # ファイルが選択されていない場合の処理
+                responses.append({"message": "No file selected"})
 
         return jsonify(responses)
 
@@ -58,7 +62,7 @@ def list_texts():
 
 @app.route('/delete', methods=['POST'])
 def delete_file():
-    company_id = request.json['company_id']
+    company_id = os.environ['COMPANY_ID'],
     upload_timestamp = request.json['upload_timestamp']
     
     # DynamoDBから該当するレコードを取得
