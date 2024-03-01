@@ -62,33 +62,40 @@ def list_texts():
 
 @app.route('/delete', methods=['POST'])
 def delete_file():
-    company_id = os.environ['COMPANY_ID'],
+    company_id = os.environ['COMPANY_ID']  # 余分なカンマを削除
     upload_timestamp = request.json['upload_timestamp']
     
-    # DynamoDBから該当するレコードを取得
-    response = table.get_item(
-        Key={
-            'company_id': company_id,
-            'upload_timestamp': upload_timestamp
-        }
-    )
-    item = response['Item']
-    file_url = item['file_url']
-    # S3オブジェクトのキーを抽出
-    file_key = file_url.split(f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/")[1]
+    # DynamoDBから該当するレコードを取得する際のエラーを修正
+    try:
+        response = table.get_item(
+            Key={
+                'company_id': company_id,
+                'upload_timestamp': upload_timestamp
+            }
+        )
+        item = response.get('Item', None)
+        if not item:
+            return jsonify({"message": "Item not found"}), 404
+        
+        file_url = item['file_url']
+        # S3オブジェクトのキーを抽出
+        file_key = file_url.split(f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/")[1]
 
-    # S3からファイルを削除
-    s3.delete_object(Bucket=S3_BUCKET_NAME, Key=file_key)
+        # S3からファイルを削除
+        s3.delete_object(Bucket=S3_BUCKET_NAME, Key=file_key)
 
-    # DynamoDBからレコードを削除
-    table.delete_item(
-        Key={
-            'company_id': company_id,
-            'upload_timestamp': upload_timestamp
-        }
-    )
-    
-    return jsonify({"message": "Delete successful"})
+        # DynamoDBからレコードを削除
+        table.delete_item(
+            Key={
+                'company_id': company_id,
+                'upload_timestamp': upload_timestamp
+            }
+        )
+        
+        return jsonify({"message": "Delete successful"})
+    except Exception as e:
+        return jsonify({"message": "Error deleting item", "error": str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True)
