@@ -9,3 +9,4 @@ tiktoken==0.4.0
 qdrant-client==1.7.1
 requests==2.31.0
 azure-cognitiveservices-speech==1.30.0
+Werkzeug==3.0.0
