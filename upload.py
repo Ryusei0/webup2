@@ -18,6 +18,7 @@ speech_key = os.environ['AZURE_SPEECH_KEY']
 service_region = os.environ['AZURE_SERVICE_REGION']
 S3_BUCKET_NAME = "testunity1.0"
 AWS_REGION = "ap-northeast-3"
+company_id = os.environ['COMPANY_ID']  # 余分なカンマを削除
 # 一時ディレクトリの作成
 output_directory = tempfile.mkdtemp()
 
@@ -100,7 +101,6 @@ def list_texts():
 
 @app.route('/delete', methods=['POST'])
 def delete_file():
-    company_id = os.environ['COMPANY_ID']  # 余分なカンマを削除
     upload_timestamp = request.json['upload_timestamp']
     
     # DynamoDBから該当するレコードを取得する際のエラーを修正
@@ -163,6 +163,7 @@ def upload_extended():
     # DynamoDBにレコードを保存
     upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     dynamodb_record = {
+        'company_id': os.environ['COMPANY_ID'],
         'text_id': text_id,
         'upload_timestamp': upload_timestamp,
         'additional_text': additional_text,
