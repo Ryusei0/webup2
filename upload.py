@@ -134,47 +134,63 @@ def delete_file():
     except Exception as e:
         return jsonify({"message": "Error deleting item", "error": str(e)}), 500
     
+
 @app.route('/upload_extended', methods=['POST'])
 def upload_extended():
-    text_id = request.form['text_id']
-    additional_text = request.form['additional_text']
-    description = request.form['description']
-    thumbnail = request.files['thumbnail']
-    media = request.files['media']
+    # リクエストから複数の入力を受け取る
+    texts = request.form.getlist('text[]')
+    descriptions = request.form.getlist('description[]')
+    thumbnails = request.files.getlist('thumbnail[]')
+    medias = request.files.getlist('media[]')
     responses = []
 
-    # サムネイルとメディアファイルのアップロード処理
-    for file, file_type in [(thumbnail, 'thumbnail'), (media, 'media')]:
-        if file.filename:
-            filename = secure_filename(file.filename)
-            filepath = f'uploads/{text_id}/{file_type}/{filename}'
-            s3.upload_fileobj(file, S3_BUCKET_NAME, filepath)
-            file_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{filepath}"
+    for text, description, thumbnail, media in zip(texts, descriptions, thumbnails, medias):
+        upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        text_id = str(uuid.uuid4())  # 各アップロードセットに一意のIDを生成
 
-            # DynamoDBに保存するためのレコード情報を更新
-            responses.append({"type": file_type, "file_url": file_url})
+        # 音声の生成とアップロード
+        if text and description:
+            mp3_filename = text_to_speech(description, text_id)
+            audio_file_key = f'subuploads/{text_id}/audio/{os.path.basename(mp3_filename)}'
+            s3.upload_file(mp3_filename, S3_BUCKET_NAME, audio_file_key)
+            audio_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{audio_file_key}"
+        else:
+            audio_url = None
 
-    # 説明文から音声を生成し、S3にアップロード
-    mp3_filename = text_to_speech(description, text_id)
-    audio_file_key = f'uploads/{text_id}/audio/{os.path.basename(mp3_filename)}'
-    s3.upload_file(mp3_filename, S3_BUCKET_NAME, audio_file_key)
-    audio_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{audio_file_key}"
+        # サムネイルのアップロード
+        if thumbnail and thumbnail.filename:
+            thumbnail_filename = secure_filename(thumbnail.filename)
+            thumbnail_filepath = f'subuploads/{text_id}/thumbnail/{thumbnail_filename}'
+            s3.upload_fileobj(thumbnail, S3_BUCKET_NAME, thumbnail_filepath)
+            thumbnail_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{thumbnail_filepath}"
+        else:
+            thumbnail_url = None
 
-    # DynamoDBにレコードを保存
-    upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    dynamodb_record = {
-        'company_id': os.environ['COMPANY_ID'],
-        'text_id': text_id,
-        'upload_timestamp': upload_timestamp,
-        'additional_text': additional_text,
-        'description': description,
-        'thumbnail_url': responses[0]['file_url'],
-        'media_url': responses[1]['file_url'],
-        'audio_url': audio_url
-    }
-    table.put_item(Item=dynamodb_record)
+        # メディアのアップロード
+        if media and media.filename:
+            media_filename = secure_filename(media.filename)
+            media_filepath = f'subuploads/{text_id}/media/{media_filename}'
+            s3.upload_fileobj(media, S3_BUCKET_NAME, media_filepath)
+            media_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{media_filepath}"
+        else:
+            media_url = None
 
-    return jsonify({"message": "Upload successful", "data": responses, "audio_url": audio_url})
+        # DynamoDBに保存
+        dynamodb_record = {
+            'company_id': os.environ['COMPANY_ID'],
+            'text_id': text_id,
+            'upload_timestamp': upload_timestamp,
+            'text': text,
+            'description': description,
+            'audio_url': audio_url,
+            'thumbnail_url': thumbnail_url,
+            'media_url': media_url
+        }
+        table.put_item(Item=dynamodb_record)
+
+        responses.append({"message": "Upload successful", "data": dynamodb_record})
+
+    return jsonify(responses)
 
 if __name__ == "__main__":
     app.run(debug=True)
