@@ -99,6 +99,15 @@ def list_texts():
     items = response['Items']
     return jsonify(items)
 
+@app.route('/list_extended_uploads', methods=['GET'])
+def list_extended_uploads():
+    # テーブルから全てのアイテムを取得するためにスキャン操作を実行
+    response = table.scan()
+    items = response['Items']
+    # 'upload_extended'関数によって作成されたアップロードだけを含むようにアイテムをフィルタリング
+    extended_uploads = [item for item in items if 'text_id' in item]
+    return jsonify(extended_uploads)
+
 @app.route('/delete', methods=['POST'])
 def delete_file():
     upload_timestamp = request.json['upload_timestamp']
@@ -133,6 +142,48 @@ def delete_file():
         return jsonify({"message": "Delete successful"})
     except Exception as e:
         return jsonify({"message": "Error deleting item", "error": str(e)}), 500
+    
+@app.route('/delete_subupload', methods=['POST'])
+def delete_subupload():
+    text_id = request.json['text_id']
+
+    try:
+        # DynamoDBから該当するレコードを検索
+        response = table.get_item(
+            Key={
+                'company_id': company_id,
+                'text_id': text_id
+            }
+        )
+        item = response.get('Item', None)
+        if not item:
+            return jsonify({"message": "Item not found"}), 404
+
+        # S3から関連ファイルを削除する
+        if item.get('audio_url'):
+            audio_key = item['audio_url'].split(f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/")[1]
+            s3.delete_object(Bucket=S3_BUCKET_NAME, Key=audio_key)
+        
+        if item.get('thumbnail_url'):
+            thumbnail_key = item['thumbnail_url'].split(f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/")[1]
+            s3.delete_object(Bucket=S3_BUCKET_NAME, Key=thumbnail_key)
+
+        if item.get('media_url'):
+            media_key = item['media_url'].split(f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/")[1]
+            s3.delete_object(Bucket=S3_BUCKET_NAME, Key=media_key)
+
+        # DynamoDBからレコードを削除
+        table.delete_item(
+            Key={
+                'company_id': company_id,
+                'text_id': text_id
+            }
+        )
+        
+        return jsonify({"message": "Delete successful"})
+    except Exception as e:
+        return jsonify({"message": "Error deleting item", "error": str(e)}), 500
+
     
 
 @app.route('/upload_extended', methods=['POST'])
