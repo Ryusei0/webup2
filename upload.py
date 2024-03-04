@@ -59,32 +59,45 @@ def text_to_speech(text):
 @app.route('/upload_extended', methods=['POST'])
 def upload_extended():
     try:
-        texts = request.form.getlist('text[]')
+        # フォームデータから複数のアイテムを取得
+        text_ids = request.form.getlist('text_id[]')
+        additional_texts = request.form.getlist('text[]')
         descriptions = request.form.getlist('description[]')
         thumbnails = request.files.getlist('thumbnail[]')
         medias = request.files.getlist('media[]')
+
         responses = []
 
-        for text, description, thumbnail, media in zip(texts, descriptions, thumbnails, medias):
-            if not text or not description:
-                continue  # Skip if text or description is missing
-            
-            upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            text_id = str(uuid.uuid4())  # Generate a unique ID for each upload set
+        # 受け取ったアイテムの数に基づいてループ処理
+        for i in range(max(len(text_ids), len(additional_texts), len(descriptions), len(thumbnails), len(medias))):
+            text_id = text_ids[i] if i < len(text_ids) else None
+            text = additional_texts[i] if i < len(additional_texts) else None
+            description = descriptions[i] if i < len(descriptions) else None
+            thumbnail = thumbnails[i] if i < len(thumbnails) else None
+            media = medias[i] if i < len(medias) else None
 
-            # Process and upload audio
+            # 必須フィールドの検証
+            if not text_id or not text or not description:
+                responses.append({"message": f"Missing required fields for item index: {i}"})
+                continue  # 必要なフィールドがなければ次のアイテムにスキップ
+
+            upload_timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+            # 音声生成とアップロード
             audio_url = None
             try:
-                mp3_filename = text_to_speech(description)
+                # 音声を生成し、mp3ファイルを取得
+                mp3_filename = text_to_speech(description)  # この関数は音声を生成し、mp3ファイルのパスを返す
                 audio_file_key = f'subuploads/{text_id}/audio/{os.path.basename(mp3_filename)}'
-                s3.upload_file(mp3_filename, S3_BUCKET_NAME, audio_file_key)
+                s3.upload_file(mp3_filename, 'YOUR_S3_BUCKET_NAME', audio_file_key)
                 audio_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{audio_file_key}"
             except Exception as e:
-                app.logger.error(f"Error uploading audio file: {str(e)}")
+                app.logger.error(f"Error generating/uploading audio file: {str(e)}")
             finally:
                 if os.path.exists(mp3_filename):
-                    os.remove(mp3_filename)  # Ensure the mp3 file is removed after upload
+                    os.remove(mp3_filename)  # 生成されたローカルのmp3ファイルを削除
 
+            # サムネイルとメディアのアップロード処理...
             # Upload thumbnail
             thumbnail_url = None
             if thumbnail and thumbnail.filename:
@@ -95,7 +108,6 @@ def upload_extended():
                     thumbnail_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{thumbnail_filepath}"
                 except Exception as e:
                     app.logger.error(f"Error uploading thumbnail: {str(e)}")
-
             # Upload media
             media_url = None
             if media and media.filename:
@@ -125,12 +137,8 @@ def upload_extended():
                 app.logger.error(f"Error saving to DynamoDB: {str(e)}")
                 responses.append({"message": "Error processing the upload", "error": str(e)})
 
-        if not responses:
-            return jsonify({"message": "No valid data provided"}), 400
-
         return jsonify(responses)
     except Exception as e:
-        app.logger.error(f"An error occurred: {str(e)}")
         return jsonify({"message": "Error processing the upload", "error": str(e)}), 500
 
 @app.route('/upload', methods=['POST'])
