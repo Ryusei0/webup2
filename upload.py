@@ -30,7 +30,7 @@ def generate_unique_filename(original_filename):
     unique_filename = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}.{extension}"
     return unique_filename
 
-def text_to_speech(text, text_id):
+def text_to_speech(text):
     sanitized_text = secure_filename(text)
     base_filename = f"{sanitized_text}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}"
     wav_filename = os.path.join(output_directory, f"{base_filename}.wav")
@@ -40,8 +40,7 @@ def text_to_speech(text, text_id):
     audio_config = speechsdk.audio.AudioOutputConfig(filename=wav_filename)
     synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
     
-    ssml_string = f"""
-    <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"
+    ssml_string = f"""<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis"
            xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="ja-JP">
         <voice name="ja-JP-DaichiNeural">
             <mstts:express-as style="customerservice" styledegree="3">
@@ -53,9 +52,86 @@ def text_to_speech(text, text_id):
     
     audio = AudioSegment.from_wav(wav_filename)
     audio.export(mp3_filename, format="mp3")
-    os.remove(wav_filename)
+    os.remove(wav_filename)  # Ensure the wav file is removed after conversion
 
     return mp3_filename
+
+@app.route('/upload_extended', methods=['POST'])
+def upload_extended():
+    try:
+        texts = request.form.getlist('text[]')
+        descriptions = request.form.getlist('description[]')
+        thumbnails = request.files.getlist('thumbnail[]')
+        medias = request.files.getlist('media[]')
+        responses = []
+
+        for text, description, thumbnail, media in zip(texts, descriptions, thumbnails, medias):
+            if not text or not description:
+                continue  # Skip if text or description is missing
+            
+            upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            text_id = str(uuid.uuid4())  # Generate a unique ID for each upload set
+
+            # Process and upload audio
+            audio_url = None
+            try:
+                mp3_filename = text_to_speech(description)
+                audio_file_key = f'subuploads/{text_id}/audio/{os.path.basename(mp3_filename)}'
+                s3.upload_file(mp3_filename, S3_BUCKET_NAME, audio_file_key)
+                audio_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{audio_file_key}"
+            except Exception as e:
+                app.logger.error(f"Error uploading audio file: {str(e)}")
+            finally:
+                if os.path.exists(mp3_filename):
+                    os.remove(mp3_filename)  # Ensure the mp3 file is removed after upload
+
+            # Upload thumbnail
+            thumbnail_url = None
+            if thumbnail and thumbnail.filename:
+                try:
+                    thumbnail_filename = generate_unique_filename(thumbnail.filename)
+                    thumbnail_filepath = f'subuploads/{text_id}/thumbnail/{thumbnail_filename}'
+                    s3.upload_fileobj(thumbnail, S3_BUCKET_NAME, thumbnail_filepath)
+                    thumbnail_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{thumbnail_filepath}"
+                except Exception as e:
+                    app.logger.error(f"Error uploading thumbnail: {str(e)}")
+
+            # Upload media
+            media_url = None
+            if media and media.filename:
+                try:
+                    media_filename = generate_unique_filename(media.filename)
+                    media_filepath = f'subuploads/{text_id}/media/{media_filename}'
+                    s3.upload_fileobj(media, S3_BUCKET_NAME, media_filepath)
+                    media_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{media_filepath}"
+                except Exception as e:
+                    app.logger.error(f"Error uploading media: {str(e)}")
+
+            # Save to DynamoDB
+            try:
+                dynamodb_record = {
+                    'company_id': company_id,
+                    'text_id': text_id,
+                    'upload_timestamp': upload_timestamp,
+                    'text': text,
+                    'description': description,
+                    'audio_url': audio_url,
+                    'thumbnail_url': thumbnail_url,
+                    'media_url': media_url
+                }
+                table.put_item(Item=dynamodb_record)
+                responses.append({"message": "Upload successful", "data": dynamodb_record})
+            except Exception as e:
+                app.logger.error(f"Error saving to DynamoDB: {str(e)}")
+                responses.append({"message": "Error processing the upload", "error": str(e)})
+
+        if not responses:
+            return jsonify({"message": "No valid data provided"}), 400
+
+        return jsonify(responses)
+    except Exception as e:
+        app.logger.error(f"An error occurred: {str(e)}")
+        return jsonify({"message": "Error processing the upload", "error": str(e)}), 500
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -181,69 +257,6 @@ def delete_subupload():
         return jsonify({"message": "Delete successful"})
     except Exception as e:
         return jsonify({"message": "Error deleting item", "error": str(e)}), 500
-
-    
-
-@app.route('/upload_extended', methods=['POST'])
-def upload_extended():
-    try:
-        # リクエストから複数の入力を受け取る
-        texts = request.form.getlist('text[]')
-        descriptions = request.form.getlist('description[]')
-        thumbnails = request.files.getlist('thumbnail[]')
-        medias = request.files.getlist('media[]')
-        responses = []
-
-        for text, description, thumbnail, media in zip(texts, descriptions, thumbnails, medias):
-            upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            text_id = str(uuid.uuid4())  # 各アップロードセットに一意のIDを生成
-
-            # 音声の生成とアップロード
-            audio_url = None
-            if text and description:
-                mp3_filename = text_to_speech(description, text_id)
-                audio_file_key = f'subuploads/{text_id}/audio/{os.path.basename(mp3_filename)}'
-                s3.upload_file(mp3_filename, S3_BUCKET_NAME, audio_file_key)
-                audio_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{audio_file_key}"
-                os.remove(mp3_filename)  # ローカルファイルの削除
-
-            # サムネイルのアップロード
-            thumbnail_url = None
-            if thumbnail and thumbnail.filename:
-                thumbnail_filename = generate_unique_filename(thumbnail.filename)
-                thumbnail_filepath = f'subuploads/{text_id}/thumbnail/{thumbnail_filename}'
-                s3.upload_fileobj(thumbnail, S3_BUCKET_NAME, thumbnail_filepath)
-                thumbnail_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{thumbnail_filepath}"
-
-            # メディアのアップロード
-            media_url = None
-            if media and media.filename:
-                media_filename = generate_unique_filename(media.filename)
-                media_filepath = f'subuploads/{text_id}/media/{media_filename}'
-                s3.upload_fileobj(media, S3_BUCKET_NAME, media_filepath)
-                media_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{media_filepath}"
-
-            # DynamoDBに保存
-            dynamodb_record = {
-                'company_id': company_id,
-                'text_id': text_id,
-                'upload_timestamp': upload_timestamp,
-                'text': text,
-                'description': description,
-                'audio_url': audio_url,
-                'thumbnail_url': thumbnail_url,
-                'media_url': media_url
-            }
-            table.put_item(Item=dynamodb_record)
-
-            responses.append({"message": "Upload successful", "data": dynamodb_record})
-
-        return jsonify(responses)
-    except Exception as e:
-        # エラー情報をログに記録
-        app.logger.error(f"An error occurred: {str(e)}")
-        # エラー情報を含むレスポンスをクライアントに返す
-        return jsonify({"message": "Error processing the upload", "error": str(e)}), 500
 
 
 if __name__ == "__main__":
