@@ -18,16 +18,19 @@ speech_key = os.environ['AZURE_SPEECH_KEY']
 service_region = os.environ['AZURE_SERVICE_REGION']
 S3_BUCKET_NAME = "testunity1.0"
 AWS_REGION = "ap-northeast-3"
-company_id = os.environ['COMPANY_ID']  # 余分なカンマを削除
-# 一時ディレクトリの作成
+company_id = os.environ['COMPANY_ID']
 output_directory = tempfile.mkdtemp()
 
 s3 = boto3.client('s3', region_name=AWS_REGION, aws_access_key_id=AWS_ACCESS_KEY_ID, aws_secret_access_key=AWS_SECRET_ACCESS_KEY)
 dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
 table = dynamodb.Table('maindatabase')
 
+def generate_unique_filename(original_filename):
+    extension = original_filename.rsplit('.', 1)[1] if '.' in original_filename else ''
+    unique_filename = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}.{extension}"
+    return unique_filename
+
 def text_to_speech(text, text_id):
-    # タイトルからファイル名を生成
     sanitized_text = secure_filename(text)
     base_filename = f"{sanitized_text}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}"
     wav_filename = os.path.join(output_directory, f"{base_filename}.wav")
@@ -46,13 +49,11 @@ def text_to_speech(text, text_id):
             </mstts:express-as>
         </voice>
     </speak>"""
-
     synthesizer.speak_ssml_async(ssml_string).get()
     
-    # WAVからMP3への変換
     audio = AudioSegment.from_wav(wav_filename)
     audio.export(mp3_filename, format="mp3")
-    os.remove(wav_filename)  # WAVファイルの削除
+    os.remove(wav_filename)
 
     return mp3_filename
 
@@ -63,21 +64,19 @@ def upload_file():
         files = request.files.getlist('file[]')
         responses = []
 
-        # ファイルとテキストのペアを処理するための修正
         for text, file in zip(texts, files):
-            if file.filename:  # 空のファイル名をチェック
-                original_filename = secure_filename(file.filename)
+            if file.filename:
+                unique_filename = generate_unique_filename(file.filename)
                 folder_name = 'uploads/'
-                upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                full_file_name = os.path.join(folder_name, original_filename)
+                full_file_name = os.path.join(folder_name, unique_filename)
 
                 s3.upload_fileobj(file, S3_BUCKET_NAME, full_file_name)
                 file_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{full_file_name}"
                 
-                # DynamoDBに保存
+                upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 table.put_item(
                     Item={
-                        'company_id': os.environ['COMPANY_ID'],
+                        'company_id': company_id,
                         'upload_timestamp': upload_timestamp,
                         'text': text,
                         'file_url': file_url
@@ -86,7 +85,6 @@ def upload_file():
                 
                 responses.append({"message": "Upload successful", "file_url": file_url})
             else:
-                # ファイルが選択されていない場合の処理
                 responses.append({"message": "No file selected"})
 
         return jsonify(responses)
