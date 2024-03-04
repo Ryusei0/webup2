@@ -186,64 +186,65 @@ def delete_subupload():
 
 @app.route('/upload_extended', methods=['POST'])
 def upload_extended():
- try:
-    # リクエストから複数の入力を受け取る
-    texts = request.form.getlist('text[]')
-    descriptions = request.form.getlist('description[]')
-    thumbnails = request.files.getlist('thumbnail[]')
-    medias = request.files.getlist('media[]')
-    responses = []
+    try:
+        # リクエストから複数の入力を受け取る
+        texts = request.form.getlist('text[]')
+        descriptions = request.form.getlist('description[]')
+        thumbnails = request.files.getlist('thumbnail[]')
+        medias = request.files.getlist('media[]')
+        responses = []
 
-    for text, description, thumbnail, media in zip(texts, descriptions, thumbnails, medias):
-        upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        text_id = str(uuid.uuid4())  # 各アップロードセットに一意のIDを生成
+        for text, description, thumbnail, media in zip(texts, descriptions, thumbnails, medias):
+            upload_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            text_id = str(uuid.uuid4())  # 各アップロードセットに一意のIDを生成
 
-        # 音声の生成とアップロード
-        if text and description:
-            mp3_filename = text_to_speech(description, text_id)
-            audio_file_key = f'subuploads/{text_id}/audio/{os.path.basename(mp3_filename)}'
-            s3.upload_file(mp3_filename, S3_BUCKET_NAME, audio_file_key)
-            audio_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{audio_file_key}"
-        else:
+            # 音声の生成とアップロード
             audio_url = None
+            if text and description:
+                mp3_filename = text_to_speech(description, text_id)
+                audio_file_key = f'subuploads/{text_id}/audio/{os.path.basename(mp3_filename)}'
+                s3.upload_file(mp3_filename, S3_BUCKET_NAME, audio_file_key)
+                audio_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{audio_file_key}"
+                os.remove(mp3_filename)  # ローカルファイルの削除
 
-        # サムネイルのアップロード
-        if thumbnail and thumbnail.filename:
-            thumbnail_filename = secure_filename(thumbnail.filename)
-            thumbnail_filepath = f'subuploads/{text_id}/thumbnail/{thumbnail_filename}'
-            s3.upload_fileobj(thumbnail, S3_BUCKET_NAME, thumbnail_filepath)
-            thumbnail_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{thumbnail_filepath}"
-        else:
+            # サムネイルのアップロード
             thumbnail_url = None
+            if thumbnail and thumbnail.filename:
+                thumbnail_filename = generate_unique_filename(thumbnail.filename)
+                thumbnail_filepath = f'subuploads/{text_id}/thumbnail/{thumbnail_filename}'
+                s3.upload_fileobj(thumbnail, S3_BUCKET_NAME, thumbnail_filepath)
+                thumbnail_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{thumbnail_filepath}"
 
-        # メディアのアップロード
-        if media and media.filename:
-            media_filename = secure_filename(media.filename)
-            media_filepath = f'subuploads/{text_id}/media/{media_filename}'
-            s3.upload_fileobj(media, S3_BUCKET_NAME, media_filepath)
-            media_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{media_filepath}"
-        else:
+            # メディアのアップロード
             media_url = None
+            if media and media.filename:
+                media_filename = generate_unique_filename(media.filename)
+                media_filepath = f'subuploads/{text_id}/media/{media_filename}'
+                s3.upload_fileobj(media, S3_BUCKET_NAME, media_filepath)
+                media_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{media_filepath}"
 
-        # DynamoDBに保存
-        dynamodb_record = {
-            'company_id': os.environ['COMPANY_ID'],
-            'text_id': text_id,
-            'upload_timestamp': upload_timestamp,
-            'text': text,
-            'description': description,
-            'audio_url': audio_url,
-            'thumbnail_url': thumbnail_url,
-            'media_url': media_url
-        }
-        table.put_item(Item=dynamodb_record)
+            # DynamoDBに保存
+            dynamodb_record = {
+                'company_id': company_id,
+                'text_id': text_id,
+                'upload_timestamp': upload_timestamp,
+                'text': text,
+                'description': description,
+                'audio_url': audio_url,
+                'thumbnail_url': thumbnail_url,
+                'media_url': media_url
+            }
+            table.put_item(Item=dynamodb_record)
 
-        responses.append({"message": "Upload successful", "data": dynamodb_record})
+            responses.append({"message": "Upload successful", "data": dynamodb_record})
 
-    return jsonify(responses)
- except Exception as e:
+        return jsonify(responses)
+    except Exception as e:
+        # エラー情報をログに記録
         app.logger.error(f"An error occurred: {str(e)}")
+        # エラー情報を含むレスポンスをクライアントに返す
         return jsonify({"message": "Error processing the upload", "error": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(debug=True)
