@@ -78,8 +78,7 @@ def upload_extended():
 
             # 必須フィールドの検証
             if not text_id or not text or not description:
-                responses.append({"message": f"Missing required fields for item index: {i}"})
-                continue  # 必要なフィールドがなければ次のアイテムにスキップ
+                return jsonify({"message": f"Missing required fields for item index: {i}"}), 400  # 400 Bad Requestを返す
 
             upload_timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -89,7 +88,7 @@ def upload_extended():
                 # 音声を生成し、mp3ファイルを取得
                 mp3_filename = text_to_speech(description)  # この関数は音声を生成し、mp3ファイルのパスを返す
                 audio_file_key = f'subuploads/{text_id}/audio/{os.path.basename(mp3_filename)}'
-                s3.upload_file(mp3_filename, 'YOUR_S3_BUCKET_NAME', audio_file_key)
+                s3.upload_file(mp3_filename, S3_BUCKET_NAME, audio_file_key)
                 audio_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{audio_file_key}"
             except Exception as e:
                 app.logger.error(f"Error generating/uploading audio file: {str(e)}")
