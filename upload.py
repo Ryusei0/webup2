@@ -186,6 +186,7 @@ def delete_subupload():
 
 @app.route('/upload_extended', methods=['POST'])
 def upload_extended():
+ try:
     # リクエストから複数の入力を受け取る
     texts = request.form.getlist('text[]')
     descriptions = request.form.getlist('description[]')
@@ -240,6 +241,9 @@ def upload_extended():
         responses.append({"message": "Upload successful", "data": dynamodb_record})
 
     return jsonify(responses)
+ except Exception as e:
+        app.logger.error(f"An error occurred: {str(e)}")
+        return jsonify({"message": "Error processing the upload", "error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
